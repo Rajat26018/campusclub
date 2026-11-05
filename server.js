@@ -23,8 +23,53 @@ app.use(express.json());
 // Parse URL-encoded request bodies (e.g. from standard HTML forms)
 app.use(express.urlencoded({ extended: true }));
 
-// Serve frontend static files (HTML, CSS, JavaScript, images) from 'public' folder
-app.use(express.static(path.join(__dirname, 'public')));
+const fs = require('fs');
+
+// Ensure frontend static files exist (supports subfolders or auto-unpacks from bundle)
+function getPublicDirectory() {
+  const candidates = [
+    path.join(__dirname, 'public'),
+    path.join(process.cwd(), 'public'),
+    path.join(__dirname, 'deploy-ready', 'public'),
+    path.join(process.cwd(), 'deploy-ready', 'public'),
+    path.join(__dirname, 'campusclub', 'public'),
+    path.join(process.cwd(), 'campusclub', 'public'),
+    path.join(__dirname, '..', 'public'),
+    path.join(__dirname, '..', 'deploy-ready', 'public')
+  ];
+
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'index.html'))) {
+      return c;
+    }
+  }
+
+  // If public folder was missing from GitHub upload, auto-unpack from public-bundle.js
+  const targetDir = path.join(__dirname, 'public');
+  try {
+    const bundlePath = path.join(__dirname, 'public-bundle.js');
+    if (fs.existsSync(bundlePath)) {
+      console.log('📦 Unpacking bundled frontend assets into /public...');
+      const bundle = require(bundlePath);
+      for (const [relPath, content] of Object.entries(bundle)) {
+        const fullPath = path.join(targetDir, relPath);
+        fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+        fs.writeFileSync(fullPath, content, 'utf8');
+      }
+      console.log('✅ Frontend assets unpacked successfully!');
+      return targetDir;
+    }
+  } catch (err) {
+    console.error('Failed to unpack frontend bundle:', err);
+  }
+
+  return targetDir;
+}
+
+const PUBLIC_DIR = getPublicDirectory();
+
+// Serve frontend static files (HTML, CSS, JavaScript, images)
+app.use(express.static(PUBLIC_DIR));
 
 // Helper function to format date strings for MySQL DATE/DATETIME columns
 function formatDateTime(val) {
@@ -712,7 +757,12 @@ app.post('/api/seed', async (req, res) => {
 // Catch-all fallback middleware to serve the homepage for unspecified routes
 // ----------------------------------------------------------------------------
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const indexFile = path.join(PUBLIC_DIR, 'index.html');
+  if (fs.existsSync(indexFile)) {
+    res.sendFile(indexFile);
+  } else {
+    res.status(200).send(`<!DOCTYPE html><html><head><title>Campusclub</title></head><body><h1>Campusclub is Online!</h1><p>Frontend assets are ready. Please visit <a href="/index.html">/index.html</a> or <a href="/clubs.html">/clubs.html</a></p></body></html>`);
+  }
 });
 
 // ----------------------------------------------------------------------------
